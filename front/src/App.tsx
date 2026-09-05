@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as fabric from 'fabric';
-import { MousePointer2, Paintbrush, Eraser, Square, Circle, Layers, Trash2 } from 'lucide-react';
+import { MousePointer2, Paintbrush, Eraser, Square, Circle, Layers, Trash2, LogIn, LogOut } from 'lucide-react';
 import './index.css';
 
 function App() {
@@ -10,6 +10,13 @@ function App() {
   const [strokeColor, setStrokeColor] = useState<string>('#5c67ff');
   const [strokeWidth, setStrokeWidth] = useState<number>(3);
   const [layers, setLayers] = useState<any[]>([]);
+  
+  // Auth state
+  const [token, setToken] = useState<string | null>(localStorage.getItem('admin_token'));
+  const [showLogin, setShowLogin] = useState<boolean>(false);
+  const [username, setUsername] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [loginError, setLoginError] = useState<string>('');
 
   // Initialize Canvas
   useEffect(() => {
@@ -63,7 +70,6 @@ function App() {
         canvas.freeDrawingBrush.width = strokeWidth;
       }
     } else if (activeTool === 'eraser') {
-      // Simple eraser logic: use background color for brush
       canvas.isDrawingMode = true;
       if (canvas.freeDrawingBrush) {
         canvas.freeDrawingBrush.color = '#ffffff';
@@ -72,7 +78,6 @@ function App() {
     } else if (activeTool === 'rectangle' || activeTool === 'circle') {
       canvas.selection = false;
       canvas.forEachObject(o => o.set('selectable', false));
-      // Object drawing handled by mousedown events if we implement drag-to-draw
     }
   }, [activeTool, canvas, strokeColor, strokeWidth]);
 
@@ -101,6 +106,33 @@ function App() {
     }
   };
 
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch('http://localhost:5000/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setToken(data.token);
+        localStorage.setItem('admin_token', data.token);
+        setShowLogin(false);
+      } else {
+        setLoginError(data.message || 'Login failed');
+      }
+    } catch (err) {
+      setLoginError('Could not connect to backend server');
+    }
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    localStorage.removeItem('admin_token');
+  };
+
   const handleSave = async () => {
     if (!canvas) return;
     
@@ -108,21 +140,35 @@ function App() {
     const data = JSON.stringify(canvas.toJSON());
     localStorage.setItem('photoshop-clone-data', data);
     
-    // Optional: Send to Backend
-    try {
-      await fetch('http://localhost:5000/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectData: data })
-      });
-      alert('Project saved successfully!');
-    } catch (e) {
-      console.log('Backend not running, saved locally.');
+    // Optional: Send to Backend if token exists
+    if (token) {
+      try {
+        const res = await fetch('http://localhost:5000/api/projects', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ projectData: data })
+        });
+        const result = await res.json();
+        if (result.status === 'success') {
+          alert('Project saved successfully to the database!');
+        } else {
+          alert('Failed to save to database. Saved locally instead.');
+        }
+      } catch (e) {
+        alert('Backend not running. Saved locally!');
+      }
+    } else {
+      alert('Saved locally! Log in as admin to save to the backend database.');
     }
   };
 
   const handleExport = () => {
     if (!canvas) return;
+    // ensure everything is rendered
+    canvas.renderAll();
     const dataURL = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 1 });
     const link = document.createElement('a');
     link.download = 'my-design.png';
@@ -136,12 +182,40 @@ function App() {
     if (canvas) {
       canvas.clear();
       canvas.backgroundColor = '#ffffff';
+      canvas.renderAll();
+      updateLayers(canvas);
       localStorage.removeItem('photoshop-clone-data');
     }
   };
 
   return (
-    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
+      {/* Login Modal */}
+      {showLogin && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}>
+          <form onSubmit={handleLogin} style={{
+            background: 'var(--panel-bg)', padding: '30px', borderRadius: '12px',
+            border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '15px',
+            width: '300px'
+          }}>
+            <h3 style={{ textAlign: 'center', marginBottom: '10px' }}>Admin Login</h3>
+            {loginError && <div style={{ color: 'var(--danger-color)', fontSize: '14px', textAlign: 'center' }}>{loginError}</div>}
+            <input type="text" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)}
+                   style={{ padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.05)', color: '#fff' }} />
+            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)}
+                   style={{ padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.05)', color: '#fff' }} />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button type="submit" style={{ flex: 1, padding: '10px', background: 'var(--primary-color)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Login</button>
+              <button type="button" onClick={() => setShowLogin(false)} style={{ flex: 1, padding: '10px', background: 'transparent', color: '#fff', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Topbar */}
       <header className="topbar">
         <div className="logo-section">
@@ -152,6 +226,17 @@ function App() {
           <div className="menu-item" onClick={clearCanvas}>New</div>
           <div className="menu-item" onClick={handleSave}>Save</div>
           <div className="menu-item" onClick={handleExport}>Export</div>
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {token ? (
+            <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <LogOut size={16} /> Logout
+            </button>
+          ) : (
+            <button onClick={() => setShowLogin(true)} style={{ background: 'transparent', border: 'none', color: 'var(--primary-color)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <LogIn size={16} /> Admin Login
+            </button>
+          )}
         </div>
       </header>
 
