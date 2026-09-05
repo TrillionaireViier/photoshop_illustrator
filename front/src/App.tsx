@@ -57,6 +57,7 @@ function App() {
         height: 600,
         backgroundColor: '#ffffff',
         isDrawingMode: false,
+        preserveObjectStacking: true,
       });
 
       setCanvas(initCanvas);
