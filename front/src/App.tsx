@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as fabric from 'fabric';
-import { MousePointer2, Paintbrush, Eraser, Square, Circle, Layers, Trash2, LogIn, LogOut, Undo, Redo } from 'lucide-react';
+import { MousePointer2, Paintbrush, Eraser, Square, Circle, Layers, Trash2, LogIn, LogOut, Undo, Redo, ChevronUp, ChevronDown } from 'lucide-react';
 import './index.css';
 
 // Simple Toast component inline
@@ -82,6 +82,7 @@ function App() {
       initCanvas.on('object:added', () => { if(!isHistoryUpdate.current) onChange() });
       initCanvas.on('object:removed', () => { if(!isHistoryUpdate.current) onChange() });
       initCanvas.on('object:modified', () => { if(!isHistoryUpdate.current) onChange() });
+      initCanvas.on('path:created', () => { if(!isHistoryUpdate.current) onChange() });
 
       return () => {
         initCanvas.dispose();
@@ -421,7 +422,25 @@ function App() {
                 }}>
                   <span>Layer {layers.length - index} ({layer.type})</span>
                   <div className="layer-actions">
-                    <button className="layer-btn" onClick={(e) => {
+                    <button className="layer-btn" title="Move Up" onClick={(e) => {
+                      e.stopPropagation();
+                      if (!canvas) return;
+                      canvas.bringObjectForward(layer);
+                      canvas.renderAll();
+                      updateLayers(canvas);
+                      saveHistoryState(canvas);
+                      autoSave(canvas);
+                    }}><ChevronUp size={14} /></button>
+                    <button className="layer-btn" title="Move Down" onClick={(e) => {
+                      e.stopPropagation();
+                      if (!canvas) return;
+                      canvas.sendObjectBackwards(layer);
+                      canvas.renderAll();
+                      updateLayers(canvas);
+                      saveHistoryState(canvas);
+                      autoSave(canvas);
+                    }}><ChevronDown size={14} /></button>
+                    <button className="layer-btn" title="Delete" onClick={(e) => {
                       e.stopPropagation();
                       canvas?.remove(layer);
                     }}><Trash2 size={14} /></button>
