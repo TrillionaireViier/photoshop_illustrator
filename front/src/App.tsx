@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as fabric from 'fabric';
-import { MousePointer2, Paintbrush, Eraser, Square, Circle, Layers, Download, Save, Trash2 } from 'lucide-react';
+import { MousePointer2, Paintbrush, Eraser, Square, Circle, Layers, Trash2 } from 'lucide-react';
 import './index.css';
 
 function App() {
@@ -23,9 +23,9 @@ function App() {
 
       setCanvas(initCanvas);
 
-      initCanvas.on('object:added', updateLayers);
-      initCanvas.on('object:removed', updateLayers);
-      initCanvas.on('object:modified', updateLayers);
+      initCanvas.on('object:added', () => updateLayers(initCanvas));
+      initCanvas.on('object:removed', () => updateLayers(initCanvas));
+      initCanvas.on('object:modified', () => updateLayers(initCanvas));
       
       // Load from local storage if exists
       const savedData = localStorage.getItem('photoshop-clone-data');
@@ -123,7 +123,7 @@ function App() {
 
   const handleExport = () => {
     if (!canvas) return;
-    const dataURL = canvas.toDataURL({ format: 'png', quality: 1 });
+    const dataURL = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 1 });
     const link = document.createElement('a');
     link.download = 'my-design.png';
     link.href = dataURL;
