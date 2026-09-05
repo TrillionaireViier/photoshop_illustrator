@@ -12,6 +12,7 @@
   "dependencies": {
     "fabric": "^7.4.0",
     "lucide-react": "^1.41.0",
+    "puppeteer": "^25.10.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

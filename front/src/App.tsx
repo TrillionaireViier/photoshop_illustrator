@@ -1,7 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import * as fabric from 'fabric';
-import { MousePointer2, Paintbrush, Eraser, Square, Circle, Layers, Trash2, LogIn, LogOut } from 'lucide-react';
+import { MousePointer2, Paintbrush, Eraser, Square, Circle, Layers, Trash2, LogIn, LogOut, Undo, Redo } from 'lucide-react';
 import './index.css';
+
+// Simple Toast component inline
+const Toast = ({ message, onClose }: { message: string, onClose: () => void }) => {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 3000);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
+      background: 'var(--primary-color)', color: 'white', padding: '12px 24px',
+      borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', zIndex: 9999,
+      display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 500,
+      animation: 'slideUp 0.3s ease-out forwards'
+    }}>
+      {message}
+    </div>
+  );
+};
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -12,11 +32,22 @@ function App() {
   const [layers, setLayers] = useState<any[]>([]);
   
   // Auth state
-  const [token, setToken] = useState<string | null>(localStorage.getItem('admin_token'));
+  const [token, setToken] = useState<string | null>(localStorage.getItem('user_token'));
   const [showLogin, setShowLogin] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [loginError, setLoginError] = useState<string>('');
+  
+  // Toast
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // History State
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyStep, setHistoryStep] = useState<number>(-1);
+  const isHistoryUpdate = useRef(false);
+
+  const showToast = (msg: string) => setToastMessage(msg);
 
   // Initialize Canvas
   useEffect(() => {
@@ -30,29 +61,83 @@ function App() {
 
       setCanvas(initCanvas);
 
-      initCanvas.on('object:added', () => updateLayers(initCanvas));
-      initCanvas.on('object:removed', () => updateLayers(initCanvas));
-      initCanvas.on('object:modified', () => updateLayers(initCanvas));
-      
       // Load from local storage if exists
       const savedData = localStorage.getItem('photoshop-clone-data');
       if (savedData) {
         initCanvas.loadFromJSON(savedData, () => {
           initCanvas.renderAll();
           updateLayers(initCanvas);
+          saveHistoryState(initCanvas);
         });
+      } else {
+        saveHistoryState(initCanvas);
       }
+
+      const onChange = () => {
+        updateLayers(initCanvas);
+        saveHistoryState(initCanvas);
+        autoSave(initCanvas);
+      };
+
+      initCanvas.on('object:added', () => { if(!isHistoryUpdate.current) onChange() });
+      initCanvas.on('object:removed', () => { if(!isHistoryUpdate.current) onChange() });
+      initCanvas.on('object:modified', () => { if(!isHistoryUpdate.current) onChange() });
 
       return () => {
         initCanvas.dispose();
       };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const updateLayers = (canvasInstance: fabric.Canvas = canvas!) => {
     if (!canvasInstance) return;
     const objs = canvasInstance.getObjects();
     setLayers([...objs].reverse());
+  };
+
+  const autoSave = (canvasInstance: fabric.Canvas) => {
+    const data = JSON.stringify(canvasInstance.toJSON());
+    localStorage.setItem('photoshop-clone-data', data);
+  };
+
+  const saveHistoryState = (canvasInstance: fabric.Canvas) => {
+    if (isHistoryUpdate.current) return;
+    const json = JSON.stringify(canvasInstance.toJSON());
+    setHistory(prev => {
+      const newHistory = prev.slice(0, historyStep + 1);
+      newHistory.push(json);
+      setHistoryStep(newHistory.length - 1);
+      return newHistory;
+    });
+  };
+
+  const undo = () => {
+    if (historyStep > 0 && canvas) {
+      isHistoryUpdate.current = true;
+      const newStep = historyStep - 1;
+      setHistoryStep(newStep);
+      canvas.loadFromJSON(history[newStep], () => {
+        canvas.renderAll();
+        updateLayers(canvas);
+        isHistoryUpdate.current = false;
+        autoSave(canvas);
+      });
+    }
+  };
+
+  const redo = () => {
+    if (historyStep < history.length - 1 && canvas) {
+      isHistoryUpdate.current = true;
+      const newStep = historyStep + 1;
+      setHistoryStep(newStep);
+      canvas.loadFromJSON(history[newStep], () => {
+        canvas.renderAll();
+        updateLayers(canvas);
+        isHistoryUpdate.current = false;
+        autoSave(canvas);
+      });
+    }
   };
 
   // Handle Tool Changes
@@ -106,11 +191,12 @@ function App() {
     }
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     try {
-      const res = await fetch('http://localhost:5000/api/login', {
+      const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
+      const res = await fetch(`http://localhost:5000${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -118,10 +204,11 @@ function App() {
       const data = await res.json();
       if (data.status === 'success') {
         setToken(data.token);
-        localStorage.setItem('admin_token', data.token);
+        localStorage.setItem('user_token', data.token);
         setShowLogin(false);
+        showToast(`Welcome, ${username}!`);
       } else {
-        setLoginError(data.message || 'Login failed');
+        setLoginError(data.message || 'Authentication failed');
       }
     } catch (err) {
       setLoginError('Could not connect to backend server');
@@ -130,17 +217,16 @@ function App() {
 
   const handleLogout = () => {
     setToken(null);
-    localStorage.removeItem('admin_token');
+    localStorage.removeItem('user_token');
+    showToast('Logged out successfully');
   };
 
   const handleSave = async () => {
     if (!canvas) return;
     
-    // Save to LocalStorage
     const data = JSON.stringify(canvas.toJSON());
     localStorage.setItem('photoshop-clone-data', data);
     
-    // Optional: Send to Backend if token exists
     if (token) {
       try {
         const res = await fetch('http://localhost:5000/api/projects', {
@@ -153,21 +239,20 @@ function App() {
         });
         const result = await res.json();
         if (result.status === 'success') {
-          alert('Project saved successfully to the database!');
+          showToast('Project saved successfully to the cloud!');
         } else {
-          alert('Failed to save to database. Saved locally instead.');
+          showToast('Failed to save to cloud. Saved locally.');
         }
       } catch (e) {
-        alert('Backend not running. Saved locally!');
+        showToast('Backend offline. Saved locally!');
       }
     } else {
-      alert('Saved locally! Log in as admin to save to the backend database.');
+      showToast('Saved locally! Log in to save to the cloud.');
     }
   };
 
   const handleExport = () => {
     if (!canvas) return;
-    // ensure everything is rendered
     canvas.renderAll();
     const dataURL = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 1 });
     const link = document.createElement('a');
@@ -176,6 +261,7 @@ function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    showToast('Design exported!');
   };
 
   const clearCanvas = () => {
@@ -185,11 +271,15 @@ function App() {
       canvas.renderAll();
       updateLayers(canvas);
       localStorage.removeItem('photoshop-clone-data');
+      showToast('Canvas cleared!');
     }
   };
 
   return (
     <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', position: 'relative' }}>
+      
+      {toastMessage && <Toast message={toastMessage} onClose={() => setToastMessage(null)} />}
+
       {/* Login Modal */}
       {showLogin && (
         <div style={{
@@ -197,19 +287,27 @@ function App() {
           background: 'rgba(0,0,0,0.8)', zIndex: 1000,
           display: 'flex', alignItems: 'center', justifyContent: 'center'
         }}>
-          <form onSubmit={handleLogin} style={{
+          <form onSubmit={handleAuth} style={{
             background: 'var(--panel-bg)', padding: '30px', borderRadius: '12px',
             border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '15px',
-            width: '300px'
+            width: '320px', backdropFilter: 'blur(10px)'
           }}>
-            <h3 style={{ textAlign: 'center', marginBottom: '10px' }}>Admin Login</h3>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+              <div onClick={() => setAuthMode('login')} style={{ flex: 1, textAlign: 'center', cursor: 'pointer', paddingBottom: '5px', borderBottom: authMode === 'login' ? '2px solid var(--primary-color)' : '2px solid transparent', color: authMode === 'login' ? '#fff' : 'var(--text-muted)' }}>Login</div>
+              <div onClick={() => setAuthMode('register')} style={{ flex: 1, textAlign: 'center', cursor: 'pointer', paddingBottom: '5px', borderBottom: authMode === 'register' ? '2px solid var(--primary-color)' : '2px solid transparent', color: authMode === 'register' ? '#fff' : 'var(--text-muted)' }}>Register</div>
+            </div>
+            
             {loginError && <div style={{ color: 'var(--danger-color)', fontSize: '14px', textAlign: 'center' }}>{loginError}</div>}
-            <input type="text" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)}
+            
+            <input type="text" placeholder="Username" value={username} onChange={e => setUsername(e.target.value)} required
                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.05)', color: '#fff' }} />
-            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)}
+            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required
                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.05)', color: '#fff' }} />
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button type="submit" style={{ flex: 1, padding: '10px', background: 'var(--primary-color)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Login</button>
+            
+            <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+              <button type="submit" style={{ flex: 1, padding: '10px', background: 'var(--primary-color)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                {authMode === 'login' ? 'Login' : 'Sign Up'}
+              </button>
               <button type="button" onClick={() => setShowLogin(false)} style={{ flex: 1, padding: '10px', background: 'transparent', color: '#fff', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
             </div>
           </form>
@@ -222,11 +320,21 @@ function App() {
           <div style={{ width: 24, height: 24, background: 'var(--primary-color)', borderRadius: 6 }}></div>
           PS | AI Clone
         </div>
-        <div className="menu-items">
+        
+        <div className="menu-items" style={{ flex: 1, justifyContent: 'center', gap: '30px' }}>
+          <div style={{ display: 'flex', gap: '10px', marginRight: '20px' }}>
+            <button className="tool-btn" onClick={undo} disabled={historyStep <= 0} title="Undo" style={{ opacity: historyStep <= 0 ? 0.3 : 1 }}>
+              <Undo size={16} />
+            </button>
+            <button className="tool-btn" onClick={redo} disabled={historyStep >= history.length - 1} title="Redo" style={{ opacity: historyStep >= history.length - 1 ? 0.3 : 1 }}>
+              <Redo size={16} />
+            </button>
+          </div>
           <div className="menu-item" onClick={clearCanvas}>New</div>
           <div className="menu-item" onClick={handleSave}>Save</div>
           <div className="menu-item" onClick={handleExport}>Export</div>
         </div>
+
         <div style={{ display: 'flex', gap: '10px' }}>
           {token ? (
             <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -234,7 +342,7 @@ function App() {
             </button>
           ) : (
             <button onClick={() => setShowLogin(true)} style={{ background: 'transparent', border: 'none', color: 'var(--primary-color)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <LogIn size={16} /> Admin Login
+              <LogIn size={16} /> Login
             </button>
           )}
         </div>
